@@ -1,30 +1,23 @@
-import os
+# raster_cropper.py
+
+import glob
+import geopandas as gpd
 import rasterio
 from rasterio.mask import mask
 from shapely.geometry import mapping
-import geopandas as gpd
+import os
 import tempfile
 
-def crop_raster_with_shapefile(raster_path, country_shapefile_path, selected_country, output_path):
-    # Load the shapefile
-    country_shape = gpd.read_file(country_shapefile_path)
-    country_shape = country_shape[country_shape['COUNTRY'] == selected_country]
-
+def crop_raster_with_shapefile(raster_path, country_shape, output_path):
+    print('Opening raster file...')
     with rasterio.open(raster_path) as src:
-        # Ensure the CRS of the raster and shapefile match
+        print('Ensuring CRS match...')
         country_shape = country_shape.to_crs(src.crs)
 
-        # Create a temporary raster file with the adjusted data
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.tif') as temp_file:
-            with rasterio.open(temp_file.name, 'w', **src.meta) as temp_dst:
-                temp_dst.write(src.read(1), 1)
+        print('Cropping raster file...')
+        out_image, out_transform = mask(src, [mapping(geom) for geom in country_shape.geometry], crop=True, invert=False)
+        out_meta = src.meta.copy()
 
-            # Crop the adjusted raster with the shapefile
-            with rasterio.open(temp_file.name) as temp_src:
-                out_image, out_transform = mask(temp_src, [mapping(geom) for geom in country_shape.geometry], crop=True, invert=False)
-                out_meta = temp_src.meta.copy()
-
-        # Update the metadata
         out_meta.update({
             "driver": "GTiff",
             "height": out_image.shape[1],
@@ -32,12 +25,21 @@ def crop_raster_with_shapefile(raster_path, country_shapefile_path, selected_cou
             "transform": out_transform
         })
 
-        # Create directory for output file if it doesn't exist
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-        # Write the cropped raster to a new file
-        with rasterio.open(output_path, "w", **out_meta) as dest:
-            dest.write(out_image[0], 1)  # Select the first band
+    print('Writing cropped raster to new file...')
+    with rasterio.open(output_path, "w", **out_meta) as dest:
+        dest.write(out_image[0], 1)
 
-        # Delete the temporary file
-        os.remove(temp_file.name)
+    print('Finished cropping raster file.')
+
+def crop_rasters(input_folder, output_folder, country_name):
+    country_shapefile = 'Data/World_Countries/World_Countries_Generalized.shp'
+    shapefile = gpd.read_file(country_shapefile)
+    country = shapefile[shapefile['COUNTRY'] == country_name]
+
+    raster_files = glob.glob(os.path.join(input_folder, '*.tif'))
+
+    for raster_file in raster_files:
+        output_file = os.path.join(output_folder, os.path.basename(raster_file))
+        crop_raster_with_shapefile(raster_file, country, output_file)
