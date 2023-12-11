@@ -3,16 +3,19 @@ import ssl
 import sys
 import shutil
 import threading
-from tkinter import Tk, Button, Label, Entry, StringVar, filedialog, messagebox, scrolledtext, ttk
+from tkinter import Tk, Button, Label, Entry, StringVar, filedialog, messagebox, scrolledtext, Checkbutton, IntVar, ttk
 from urllib.request import urlopen, Request
 from datetime import datetime
 from countries import load_countries, get_bounding_box
 from nasa_cmr_api import search_nasa_cmr
 from process_files import process_h5_files
 import geopandas as gpd
+import glob
+import rasterio
+from rasterio.mask import mask
+from shapely.geometry import mapping
 
-USERAGENT = 'tis/download.py_1.0--' + sys.version.replace('\n','').replace('\r','')
-
+USERAGENT = 'tis/download.py_1.0--' + sys.version.replace('\n', '').replace('\r', '')
 
 # Load the shapefile
 shapefile = gpd.read_file('Data/Black_Marble_IDs/Black_Marble_World_tiles.shp')
@@ -30,6 +33,7 @@ class URLSearcher(Tk):
         self.country_var = StringVar()
         self.token = StringVar()
         self.destination_folder = StringVar()
+        self.crop_files_var = IntVar()
 
         Label(self, text="Start Date (e.g., 'June 1, 2022'):").grid(row=0, column=0)
         Entry(self, textvariable=self.start_date).grid(row=0, column=1)
@@ -52,7 +56,12 @@ class URLSearcher(Tk):
         self.progress = ttk.Progressbar(self, orient='horizontal', mode='determinate')
         self.progress.grid(row=5, column=0, columnspan=3)
 
-        Button(self, text="Download", command=self.download).grid(row=6, column=0, columnspan=2)
+        Checkbutton(self, text="Crop Files after Processing", variable=self.crop_files_var).grid(row=6, column=0, columnspan=2)
+
+        Button(self, text="Download", command=self.download).grid(row=7, column=0, columnspan=2)
+
+    def browse_destination_folder(self):
+        self.destination_folder.set(filedialog.askdirectory())
 
     def download(self):
         start_date_str = self.start_date.get()
@@ -76,9 +85,10 @@ class URLSearcher(Tk):
         CTX = ssl.SSLContext()
         headers = {'user-agent': USERAGENT, 'Authorization': 'Bearer ' + self.token.get()}
 
-        threading.Thread(target=self.start_download_thread, args=(urls, headers, CTX)).start()
+        crop_files = self.crop_files_var.get() == 1
+        threading.Thread(target=self.start_download_thread, args=(urls, headers, CTX, crop_files)).start()
 
-    def start_download_thread(self, urls, headers, ctx):
+    def start_download_thread(self, urls, headers, ctx, crop_files):
         for url in urls:
             url = url.strip()
             filename = url.split('/')[-1]
@@ -93,16 +103,58 @@ class URLSearcher(Tk):
                 messagebox.showerror('Download error', f'Failed to download {url} due to {str(e)}')
                 break
 
-        messagebox.showinfo('Download complete', 'Download of all files completed.')
-
         process_h5_files(self.country_var.get().strip(),
                          boundary_shapefile_path,
                          self.country_var.get().strip(),
                          self.destination_folder.get(),
                          self.destination_folder.get())
 
-    def browse_destination_folder(self):
-        self.destination_folder.set(filedialog.askdirectory())
+        if crop_files:
+            self.crop_processed_files()
+
+        messagebox.showinfo('Download complete', 'Download of all files completed.')
+
+    def crop_processed_files(self):
+        input_folder = self.destination_folder.get()
+        country_name = self.country_var.get().strip()
+
+        crop_rasters(input_folder, country_name)
+
+def crop_raster_with_shapefile(raster_path, country_shape, output_path):
+    print('Opening raster file...')
+    with rasterio.open(raster_path) as src:
+        print('Ensuring CRS match...')
+        country_shape = country_shape.to_crs(src.crs)
+
+        print('Cropping raster file...')
+        out_image, out_transform = mask(src, [mapping(geom) for geom in country_shape.geometry], crop=True, invert=False)
+        out_meta = src.meta.copy()
+
+        out_meta.update({
+            "driver": "GTiff",
+            "height": out_image.shape[1],
+            "width": out_image.shape[2],
+            "transform": out_transform
+        })
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    print('Writing cropped raster to new file...')
+    with rasterio.open(output_path, "w", **out_meta) as dest:
+        dest.write(out_image[0], 1)
+
+    print('Finished cropping raster file.')
+
+def crop_rasters(input_folder, country_name):
+    country_shapefile = 'Data/World_Countries/World_Countries_Generalized.shp'
+    shapefile = gpd.read_file(country_shapefile)
+    country = shapefile[shapefile['COUNTRY'] == country_name]
+
+    raster_files = glob.glob(os.path.join(input_folder, '*.tif'))
+
+    for raster_file in raster_files:
+        # The output file will be the same as the input file, effectively overwriting it
+        crop_raster_with_shapefile(raster_file, country, raster_file)
 
 if __name__ == "__main__":
     shapefile_path = 'Data/Black_Marble_IDs/Black_Marble_World_tiles.shp'
