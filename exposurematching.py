@@ -3,42 +3,48 @@ from tkinter import filedialog
 import rasterio
 from skimage import exposure
 import numpy as np
+import os
 
 def normalize(image):
     return (image - image.min()) / (image.max() - image.min())
 
 def load_and_match_histograms():
-    # File dialogs to select the source, reference, and output file paths
-    source_path = filedialog.askopenfilename(title="Select Source GeoTIFF")
+    # File dialogs to select the multiple source, a single reference, and a directory for output files
+    source_paths = filedialog.askopenfilenames(title="Select Source GeoTIFFs")  # Allows multiple selection
     reference_path = filedialog.askopenfilename(title="Select Reference GeoTIFF")
-    output_path = filedialog.asksaveasfilename(defaultextension=".tif", title="Save Matched GeoTIFF")
+    output_directory = filedialog.askdirectory(title="Select Output Directory")
 
-    if source_path and reference_path and output_path:
-        # Load the GeoTIFFs
-        with rasterio.open(source_path) as src:
-            image_source = src.read(1)  # Reading the first channel
-            meta_source = src.meta
-
+    if source_paths and reference_path and output_directory:
+        # Load the reference GeoTIFF
         with rasterio.open(reference_path) as ref:
             image_reference = ref.read(1)  # Reading the first channel
 
-        # Apply histogram matching
-        matched_image = exposure.match_histograms(image_source, image_reference)
+        for source_path in source_paths:
+            with rasterio.open(source_path) as src:
+                image_source = src.read(1)  # Reading the first channel
+                meta_source = src.meta
 
-        # Normalize the matched image
-        normalized_image = normalize(matched_image)
+                # Apply histogram matching
+                matched_image = exposure.match_histograms(image_source, image_reference)
 
-        # Save the matched image
-        meta_source.update(count=1)  # Ensure metadata is updated for single channel
-        with rasterio.open(output_path, "w", **meta_source) as dest:
-            dest.write(matched_image, 1)
+                # Normalize the matched image
+                normalized_image = normalize(matched_image)
 
-        # Save the normalized image
-        normalized_output_path = output_path.replace(".tif", "_normalized.tif")
-        with rasterio.open(normalized_output_path, "w", **meta_source) as dest:
-            dest.write(normalized_image, 1)
+                # Construct unique output paths
+                base_name = os.path.splitext(os.path.basename(source_path))[0]
+                matched_output_path = os.path.join(output_directory, f"{base_name}_matched.tif")
+                normalized_output_path = os.path.join(output_directory, f"{base_name}_normalized.tif")
 
-        print("Histogram matching and normalization completed. Files saved.")
+                # Save the matched and normalized images
+                meta_source.update(count=1)  # Ensure metadata is updated for single channel
+                with rasterio.open(matched_output_path, "w", **meta_source) as dest:
+                    dest.write(matched_image, 1)
+
+                with rasterio.open(normalized_output_path, "w", **meta_source) as dest:
+                    dest.write(normalized_image, 1)
+
+        print("Histogram matching and normalization completed for all selected files. Files saved.")
+
 
 # Set up the GUI window
 root = tk.Tk()

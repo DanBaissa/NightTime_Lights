@@ -33,7 +33,7 @@ def crop_raster_with_shapefile(raster_path, country_shape, output_path):
 
     print('Finished cropping raster file.')
 
-def crop_rasters(input_folder, output_folder, country_name):
+def crop_rasters(input_folder, country_name):
     country_shapefile = 'Data/World_Countries/World_Countries_Generalized.shp'
     shapefile = gpd.read_file(country_shapefile)
     country = shapefile[shapefile['COUNTRY'] == country_name]
@@ -41,5 +41,5 @@ def crop_rasters(input_folder, output_folder, country_name):
     raster_files = glob.glob(os.path.join(input_folder, '*.tif'))
 
     for raster_file in raster_files:
-        output_file = os.path.join(output_folder, os.path.basename(raster_file))
-        crop_raster_with_shapefile(raster_file, country, output_file)
+        # The output file will be the same as the input file, effectively overwriting it
+        crop_raster_with_shapefile(raster_file, country, raster_file)
